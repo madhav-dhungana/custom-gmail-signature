@@ -1,0 +1,113 @@
+import os
+import pickle
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from google.oauth2 import service_account
+
+# While modifying these SCOPES, delete the file token.pickle.
+SCOPES = ['https://www.googleapis.com/auth/gmail.settings.basic']
+
+def get_credentials(user_email, service_account_mode=False):
+    """
+    Get the Google API credentials.
+    If service_account_mode is enabled, it will use service account credentials.
+    Otherwise, it will use the credentials from 'token.pickle' or run an OAuth2 flow.
+    """
+    if service_account_mode:
+        # Set path to the Service Account Key file
+        SERVICE_ACCOUNT_FILE = 'path/to/service-account-file.json'
+
+        # Create a credentials object using the service account file and the specified scopes
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+        # Use the credentials object to create a delegated credentials object
+        delegated_credentials = credentials.with_subject(user_email)
+
+        return delegated_credentials
+    else:
+        # Load client ID and client secret from a local file
+        creds = None
+        if os.path.exists('token.pickle'):
+            with open('token.pickle', 'rb') as token:
+                creds = pickle.load(token)
+        
+        # If there are no (valid) credentials available, let the user log in
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'path/to/client_secret.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+        
+            # Save the credentials for the next run
+            with open('token.pickle', 'wb') as token:
+                pickle.dump(creds, token)
+
+        return creds
+
+
+def update_signature(user_email, signature):
+    """
+    Updates the user's Gmail signature.
+    
+    Args:
+        user_email: the email address of the user.
+        signature: the new Gmail signature.
+    """
+    service_account_mode = False if '@gmail.com' in user_email else True
+
+    creds = get_credentials(user_email, service_account_mode)
+
+    # Create a service object for the Gmail API
+    service = build('gmail', 'v1', credentials=creds)
+    
+    
+    
+
+    # Update the signature of the user's primary email
+    body = {
+        'signature': signature
+    }
+    addresses = service.users().settings().sendAs().list(userId='me').execute().get('sendAs')
+    for address in addresses:
+        # Update the signature of the primary address
+        if address.get('isPrimary'):
+            body = {'signature': signature}
+            service.users().settings().sendAs().patch(userId='me', sendAsEmail=address['sendAsEmail'], body=body).execute()
+    # service.users().settings().sendAs().patch(userId=user_email, sendAsEmail=user_email, body=body).execute()
+
+    # If it's not a service account, check for aliases
+    if not service_account_mode:
+        # Get the list of aliases for the user
+        results = service.users().settings().sendAs().list(userId=user_email).execute()
+        aliases = results.get('sendAs', [])
+
+        # Update the signatures of the aliases, if the user wants to
+        for alias in aliases:
+            if alias['sendAsEmail'] != user_email:
+                response = input(f'Do you want to update the signature of {alias["sendAsEmail"]}? (yes/no) ')
+                if response.lower() == 'yes':
+                    alias_signature = input(f'Enter the new signature for {alias["sendAsEmail"]}: ')
+                    body = {
+                        'signature': alias_signature
+                    }
+                    service.users().settings().sendAs().patch(userId=user_email, sendAsEmail=alias['sendAsEmail'], body=body).execute()
+
+
+
+# Update the signature of a non-service account user
+#update_signature('your-email@gmail.com', '<b>Your new signature</b>')
+
+# Update the signature of a service account user
+#update_signature('user@your-domain.com', '<b>Your new signature</b>', service_account_mode=True)
+
+email = 'example@gmail.com'  # Replace with the actual email
+signature = '<b>Your new signature</b>'
+
+if "@gmail.com" in email:
+    update_signature(email, signature, service_account_mode=False)
+else:
+    update_signature(email, signature, service_account_mode=True)
